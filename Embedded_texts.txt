@@ -1,0 +1,4 @@
+Here is a link to the embedded_text (its 4GB)
+https://1drv.ms/u/s!AqOG7vsr2-QvhdYWzFu8McR89oru0Q?e=sdqSXY
+
+The zip contains a csv for each patient witha basic format of |Patient|Text|Embedding| 
