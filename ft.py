@@ -138,7 +138,7 @@ class FineTune:
         download_model(self)
         self.model = AutoModelForMaskedLM.from_pretrained(self.modelPath)
         self.dataset = ld(self)
-        # Use batched=True to activate fast multithreading!    
+        # Use batched=True to  activate fast multithreading!    
         features = list(self.dataset['train'].features.keys())
         self.tokenized_datasets = self.dataset.map(self.mask_tokenize_function, batched=True, remove_columns=features)
         lm_datasets = self.tokenized_datasets.map(self.group_texts, batched=True)
@@ -152,17 +152,19 @@ class FineTune:
             batched=True,
             remove_columns=dataset['test'].column_names,
         )
-        self.masked_dataset = masked_dataset.rename_columns(
+        masked_dataset = masked_dataset.rename_columns(
             {
                 "masked_input_ids": "input_ids",
                 "masked_attention_mask": "attention_mask",
                 "masked_labels": "labels",
             }
         )
-        self.maskedPath = self.datsets_loc +'/masked/'+ self.data_loc
+        self.maskedPath = self.datsets_loc +'/masked/'+ self.HF_loc+'/'+self.data_loc
         if self.data_arg != None:
-            self.maskedPath +='/'+self.data_loc+'_'+self.data_arg
-        self.masked_dataset.save_to_disk(self.maskedPath)
+            self.maskedPath +='/'+self.data_loc+'_'+self.data_arg+'_'+
+        masked_dataset.save_to_disk(self.maskedPath)
+        self.masked_dataset = datasets.load_from_disk(self.maskedPath)
+        
         return masked_dataset
     
     def pd_Datasetdict(self):
