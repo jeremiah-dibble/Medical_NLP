@@ -150,7 +150,7 @@ class FineTune:
         masked_dataset = dataset.map(
             self.insert_random_mask,
             batched=True,
-            remove_columns=dataset['test'].column_names,
+            remove_columns=dataset['train'].column_names,
         )
         masked_dataset = masked_dataset.rename_columns(
             {
@@ -161,7 +161,7 @@ class FineTune:
         )
         self.maskedPath = self.datsets_loc +'/masked/'+ self.HF_loc+'/'+self.data_loc
         if self.data_arg != None:
-            self.maskedPath +='/'+self.data_loc+'_'+self.data_arg+'_'+
+            self.maskedPath +='/'+self.data_loc+'_'+self.data_arg
         masked_dataset.save_to_disk(self.maskedPath)
         self.masked_dataset = datasets.load_from_disk(self.maskedPath)
         
