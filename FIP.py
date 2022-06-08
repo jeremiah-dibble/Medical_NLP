@@ -27,7 +27,7 @@ from transformers import EarlyStoppingCallback
 # import FIP as fip
 # bert_imdb_tweet = fip.FIP(HF_loc='bert-base-uncased', data_locs=['imdb','tweet_eval'], data_args=[None,'hate'], quick=True)
 # OR
-# import FIP as fip
+# import FIP as fip 
 # bert_imdb_tweet = fip.FIP(HF_loc='bert-base-uncased', data_locs=['imdb','tweet_eval'], data_args=[None,'hate'])
 # bert_imdb_tweet.quick_run()
 
@@ -130,6 +130,7 @@ class FIP:
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
         
         self.model = self.train_first_model()
+        global prevData_loader
         prevData_loader = self.train_second_model()
         
     
@@ -167,7 +168,7 @@ class FIP:
         
     #Load and tokenize both datasets    
     def load_datasets(self):
-        print("Load datasets")s
+        print("Load datasets")
         self.dataset_0 = ld(self, 0)
         self.dataPath_0 = self.dataPath
         
@@ -224,8 +225,9 @@ class FIP:
         )
 
         
-        if os.path.exists(output_path):
+        if os.path.exists(output_path+'/*'):
             check_points = os.listdir(output_path)
+            print(len(check_points))
             last_cp = output_path+'/'+check_points[-1]
             trainer = AutoModelForSequenceClassification.from_pretrained(last_cp, num_labels=self.num_labels)
         else:
@@ -260,7 +262,7 @@ class FIP:
         )
 
         print("CREATING COPY OF MODEL")
-
+        global model_ori
         model_ori = copy.deepcopy(self.model) #Model already trained on yelp
         model_ori.to('cuda:0')
         # global numSteps_taken
@@ -276,7 +278,7 @@ class FIP:
 
         #Only used for the Dataloader that will be used from it
         trainer1 = Trainer(
-            model=model,
+            model=self.model,
             args=training_args,
             train_dataset=small_train_first,
             eval_dataset=small_test_first,
@@ -289,7 +291,7 @@ class FIP:
         return self.prevData_loader
                             
     def run_custom_trainer(self):
-        print('Run Custom Trainer")
+        print('Run Custom Trainer')
         output_path = f"{self.model_name}-finetune-{self.data_name0}-{self.data_name1}"
         self.custom_training_args = TrainingArguments(
             output_dir=output_path,
