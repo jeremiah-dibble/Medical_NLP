@@ -21,6 +21,11 @@ from torch.utils.data import DataLoader
 
 from transformers import EarlyStoppingCallback
 
+# import gc
+
+# gc.collect()
+
+# torch.cuda.empty_cache()
 
 
 #EXAMPLE USEAGE
@@ -110,15 +115,16 @@ class CustomTrainer(Trainer):
 
     
 class FIP:
-    def __init__(self, HF_loc, data_locs, data_args=[None,None], num_train_epochs = 10, save_loc=os.getcwd(), quick=False):
+    def __init__(self, HF_loc, data_locs, data_args=[None,None], num_train_epochs = 50, save_loc=os.getcwd(), quick=False, short=False):
 
         self.HF_loc = HF_loc
         self.save_loc = save_loc
 
         self.data_locs = data_locs
         self.data_args = data_args
+        
         self.num_train_epochs = num_train_epochs
-  
+        self.short = short
         
         if quick:
             self.quick_run()
@@ -130,8 +136,10 @@ class FIP:
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
         
         self.model = self.train_first_model()
+        print(model_ori)
         global prevData_loader
         prevData_loader = self.train_second_model()
+        return self.run_custom_trainer()
         
     
     def prep_model_datasets(self):
@@ -181,6 +189,11 @@ class FIP:
     
         self.datasets = [self.dataset_0, self.dataset_1]
         self.dataPaths = [self.dataPath_0, self.dataPath_1]
+        if self.short:
+            self.token_data_0['test'] = self.token_data_0['test'].shuffle(seed=42).select(range(2000))
+            self.token_data_0['train'] = self.token_data_0['train'].shuffle(seed=42).select(range(5000))
+            self.token_data_1['test'] = self.token_data_1['test'].shuffle(seed=42).select(range(2000))
+            self.token_data_1['train'] = self.token_data_1['train'].shuffle(seed=42).select(range(5000))
         self.token_datasets = [self.token_data_0, self.token_data_1]
     
     #Extned the labeling so there is no overlap in classes between datasets
@@ -207,18 +220,18 @@ class FIP:
         print("Train First Model")
         self.model_name = self.HF_loc.split("/")[-1]
         self.data_name0 = self.data_locs[0].split("/")[-1]
+        full_name = f"{self.model_name}-finetune-{self.data_name0}"
         output_path = 'trainer_checkpoint/'
-        output_path += f"{self.model_name}-finetune-{self.data_name0}"
-        
+        output_path += full_name
         training_args = TrainingArguments(
             output_dir=output_path,
             evaluation_strategy = "steps",
-            eval_steps = 50, # Evaluation and Save happens every 50 steps
+            eval_steps = 100, # Evaluation and Save happens every 50 steps
             save_total_limit = 5, # Only last 5 models are saved. Older ones are deleted.
             learning_rate=2e-5,
-            weight_decay=0.01,
+            weight_decay=0.1,#0.01
             push_to_hub=False,
-            num_train_epochs=5,#args.num_train_epochs,
+            num_train_epochs=self.num_train_epochs,#args.num_train_epochs,
             per_device_train_batch_size=8,
             metric_for_best_model = 'accuracy',
             load_best_model_at_end=True
@@ -232,7 +245,7 @@ class FIP:
             trainer = AutoModelForSequenceClassification.from_pretrained(last_cp, num_labels=self.num_labels)
         else:
         # TRAIN NETWORK ON FIRST DATASET
-            trainer = Trainer(
+            self.trainer = Trainer(
                         model=self.hf_model,
                         args=training_args,
                         train_dataset=self.token_datasets[0]['train'],
@@ -240,12 +253,27 @@ class FIP:
                         data_collator=self.data_collator,
                         tokenizer=self.tokenizer,
                         compute_metrics=self.compute_metrics,
-                        callbacks = [EarlyStoppingCallback(early_stopping_patience=2, early_stopping_threshold=2)]
+                        callbacks = [EarlyStoppingCallback(early_stopping_patience=0)]
                         )
 
-            trainer.train()
-        return trainer   
+            self.trainer.train()
+        self.model = self.trainer.model
+        global model_ori
+        model_ori = self.copy_ori(self.model,'originals/'+full_name)
+        return self.model   
 
+    def copy_ori(self, model, data_path):
+        print("CREATING COPY OF MODEL")
+        # model.save_pretrained(data_path)
+        # save_copy = AutoModelForSequenceClassification.from_pretrained(data_path, num_labels=self.num_labels)
+        # model_to_copy = model
+        # print("save copy is model copy?", save_copy is model_to_copy)
+        # print("save copy is self.model?", save_copy is model)
+        # print("model copy is self.model?", model_to_copy is model)
+        model_ori = copy.deepcopy(model) #Model already trained on yelp
+        model_ori.to('cuda:0')
+        return model_ori
+    
     def train_second_model(self):
         print("Train Second Model")
         self.data_name1 = self.data_locs[1].split("/")[-1]
@@ -261,10 +289,6 @@ class FIP:
             per_device_train_batch_size=8   
         )
 
-        print("CREATING COPY OF MODEL")
-        global model_ori
-        model_ori = copy.deepcopy(self.model) #Model already trained on yelp
-        model_ori.to('cuda:0')
         # global numSteps_taken
         # numSteps_taken = [0]
 
@@ -287,9 +311,9 @@ class FIP:
             compute_metrics=self.compute_metrics,
             )
         
-        self.prevData_loader = trainer1.get_train_dataloader();
+        self.prevData_loader = trainer1.get_train_dataloader()
         return self.prevData_loader
-                            
+    
     def run_custom_trainer(self):
         print('Run Custom Trainer')
         output_path = f"{self.model_name}-finetune-{self.data_name0}-{self.data_name1}"
