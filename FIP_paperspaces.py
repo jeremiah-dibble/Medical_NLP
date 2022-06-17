@@ -231,14 +231,15 @@ class FIP:
             print('dataset 1', class_label1.num_classes)
             class_label1.num_classes = class_label1.num_classes + self.label_len
             self.token_datasets[1]['train'].info.features['label'].num_classes = class_label1.num_classes
-            class_label1.names = class_label0.names + class_label1.names 
+            self.token_datasets[1]['test'].info.features['label'].names = class_label0.names + class_label1.names 
             self.token_datasets[1]['train'].info.features['label'].names = class_label1.names
-            print(class_label1)
-            print('dataset 1',self.token_datasets[1]['train'].info.features['label'])
-            print('dataset 1',self.token_datasets[1]['test'].info.features)
+            print('class label 1',class_label1)
+            print('train 1',self.token_datasets[1]['train'].info.features['label'])
+            print('test 1',self.token_datasets[1]['test'].info.features['label'])
             #updated_token_datasets = bert_imdb_tweet.token_datasets[1].map(bert_imdb_tweet.update_label)
             print('reasign')
-            self.token_datasets[1] = self.token_datasets[1].map(self.update_label)
+            self.token_datasets[1]['train'] = self.token_datasets[1]['train'].map(self.update_label)
+            self.token_datasets[1]['test'] = self.token_datasets[1]['test'].map(self.update_label)
             self.token_datasets[1].save_to_disk(self.dataPaths[1]+'_token_extended')            
                 
     
