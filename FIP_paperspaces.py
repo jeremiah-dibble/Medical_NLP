@@ -267,7 +267,7 @@ class FIP:
         self.data_name0 = self.data_locs[0].split("/")[-1]
         # Create a location to save tainer checkpoint.
         full_name = f"{self.model_name}-finetune-{self.data_name0}"
-        output_path = 'trainer_checkpoint/'
+        output_path =  self.save_loc +'/trainer_checkpoint/'
         output_path += full_name
         
         # Define training args.
@@ -301,7 +301,7 @@ class FIP:
                         data_collator=self.data_collator,
                         tokenizer=self.tokenizer,
                         compute_metrics=self.compute_metrics,
-                        callbacks = [EarlyStoppingCallback(early_stopping_patience=1)]
+                        callbacks = [EarlyStoppingCallback(early_stopping_patience=0)]
                         )
 
             self.trainer.train()
@@ -318,7 +318,9 @@ class FIP:
     def get_prev_data_loader(self):
         print("Get Previous Data Loader")
         self.data_name1 = self.data_locs[1].split("/")[-1]
-        output_path = f"{self.model_name}-finetune-{self.data_name1}"
+        full_name = f"{self.model_name}-finetune-{self.data_name1}"
+        output_path =  self.save_loc +'/trainer_checkpoint/'
+        output_path += full_name
         # Define the traing arguments 
         training_args = TrainingArguments(
             output_dir=output_path,
@@ -353,13 +355,17 @@ class FIP:
         self.prevData_loader = trainer1.get_train_dataloader()
         return self.prevData_loader
     
-    # Run the custom trainer on both datasets.
-    # This method requires both datasets to be tokenized
-    # and prevData_loader and model_ori must be defined from get_prev_data_loader()
-    # and train_first_dataset() respectively. 
+    '''
+     Run the custom trainer on both datasets.
+     This method requires both datasets to be tokenized
+     and prevData_loader and model_ori must be defined from get_prev_data_loader()
+     and train_first_dataset() respectively. 
+    '''
     def run_custom_trainer(self):
         print('Run Custom Trainer')
-        output_path = f"{self.model_name}-finetune-{self.data_name0}-{self.data_name1}"
+        full_name = f"{self.model_name}-finetune-{self.data_name0}-{self.data_name1}"
+        output_path =  self.save_loc +'/trainer_checkpoint/'
+        output_path += full_name
         # Define the training arguments.
         self.custom_training_args = TrainingArguments(
             output_dir=output_path,
