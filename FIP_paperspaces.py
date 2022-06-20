@@ -37,20 +37,24 @@ import gc
 # bert_imdb_tweet.quick_run()
 
 
-
-
+# Downlad a model and define the tokenizer.
 def download_model(instance):
+    # 
     models_loc = instance.save_loc + "/models/"
+    # Check if the model exits and only download if not.
     instance.modelPath = models_loc + instance.HF_loc
     if not os.path.exists(instance.modelPath):
         instance.model = SentenceTransformer(instance.HF_loc)
         instance.model.save(instance.modelPath)
     instance.tokenizer = AutoTokenizer.from_pretrained(instance.modelPath, use_fast=True)
 
+# Load one of the two datasets.
 def ld(instance, dataset_num):
     instance.dataPath = instance.datsets_loc + instance.data_locs[dataset_num]
+    # If there is a data arg add it save location name.
     if instance.data_args[dataset_num] != None:
         instance.dataPath +='/'+instance.data_locs[dataset_num]+'_'+instance.data_args[dataset_num]
+    # Check if the dataset has been downloaded before and load it localy if so.
     if os.path.exists(instance.dataPath):
         instance.dataset = load_from_disk(instance.dataPath)
         print(instance.dataPath)
@@ -62,6 +66,7 @@ def ld(instance, dataset_num):
         instance.dataset.save_to_disk(instance.dataPath)
     return instance.dataset
 
+# This is the  FIP CustomTrainer
 class CustomTrainer(Trainer):
 
     def compute_loss(self, model, inputs, return_outputs=False):
@@ -77,11 +82,11 @@ class CustomTrainer(Trainer):
         f_softmax = nn.Softmax(dim=1)
         
         inputs_prev = next(iter(prevData_loader))
+        #inputs_prev = inputs_prev.to("cuda:0")
         for key in inputs_prev:
             inputs_prev[key] = inputs_prev[key].to("cuda:0")
-        # print(inputs_prev)
-        # inputs_prev.with_format("torch")
-        #inputs_prev = inputs_prev.to("cuda:0")
+
+        
         
         outputs = model(**inputs_prev)
         outputs = f_softmax(outputs.logits)
@@ -101,26 +106,33 @@ class CustomTrainer(Trainer):
         #print(op_current[0])
         loss = loss + torch.sum(op_current["loss"])
                 
-        # Save past state if it exists
+        # Save past state if it exists.
         # TODO: this needs to be fixed and made cleaner later.
         if self.args.past_index >= 0:
             self._past = outputs[self.args.past_index]
 
-#         if labels is not None:
-#             loss = self.label_smoother(outputs, labels)
-#         else:
-#             # We don't use .loss here since the model may return tuples instead of ModelOutput.
-#             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
-
-        #numSteps_taken[-1] = numSteps_taken[-1]+1
-        
-        #print("number of times running the compute loss fn = ", numSteps_taken[0])
         return (loss, outputs) if return_outputs else loss
 
     
+
 class FIP:
-    def __init__(self, HF_loc, data_locs, data_args=[None,None], num_train_epochs = 50, save_loc=os.getcwd(), quick=False, short=False):
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    '''
+     FIP requires a model and two datasets, some datasets require optional arguments.
+     HF_loc should be a classification model's local disk location or huggingface locations. 
+                                           (HF example: 'emilyalsentzer/Bio_ClinicalBERT')
+     data_locs must be a list of two dataset local disk location or huggingface locations.
+     data_args must be a list containing 'None' or an option of their respective data_locs datasubsets subsets. 
+                                                           (example: dataset_loc[0]=glue, data_args[0] = 'cola')
+     num_train_epochs is the number of training epochs. Default is 50.
+     save_loc is the base directory that models and datasets will be saved to. 
+     quick=True automatically runs the quick_run() method after initialization.
+     short=True subsamples the datasets to a 5k training and 2k testset.Generally only useful for debugging.
+    '''
+
+    def __init__(self, HF_loc, data_locs, data_args=[None,None], num_train_epochs = 50, 
+                 save_loc = os.getcwd(), quick = False, short = False):
+        #device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        # Assining inputs to the class instance.
         self.HF_loc = HF_loc
         self.save_loc = save_loc
 
@@ -132,16 +144,22 @@ class FIP:
         
         if quick:
             self.quick_run()
-        
+    
+    # Prepare the two datasets and run all three trainers with one command.
     def quick_run(self):
+        # Load the datasets and extend the labeling to remove overlap.
         self.prep_model_datasets()
-        
+        # Define a metric to evaluate your models.
         self.metric = load_metric("accuracy")
+        # Define a data collator that will keep a uniform input lenght.
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
-        
-        self.model = self.train_first_model()
+        # Train the saved model on the first dataset.
+        self.model = self.train_first_dataset()
+        # Save the data loader from a trainer based on the first dataset
+        # it will be used in the custom trainer.
         global prevData_loader
-        prevData_loader = self.train_second_model()
+        prevData_loader = self.get_prev_data_loader()
+
         return self.run_custom_trainer()
         
     
@@ -149,21 +167,24 @@ class FIP:
         download_model(self)
         
         self.datsets_loc = self.save_loc +'/datasets/'
-        # Load both datasets and extend the labeling of the second to eliminate overlap
+        # Load both datasets and extend the labeling of the second to eliminate overlap.
         self.load_datasets()
         self.extend_labels()
 
         self.num_labels = (len(np.unique(self.datasets[0]['train']['label'])) + 
                             len(np.unique(self.datasets[1]['train']['label'])))
-        print("TOtal # of labels = ", self.num_labels)
+        print("Total # of labels = ", self.num_labels)
+        # Load the model provided by the user with the correct number labels based on the two dataset.
         self.hf_model = AutoModelForSequenceClassification.from_pretrained(self.HF_loc, num_labels=self.num_labels)
 
 
-    # Tokenize a Dataset 
+    # Tokenize a Dataset.
     def tokenize_data(self, dataset, dataPath):
         tokenDataPath = dataPath +'_token'
+        # Check if this dataset has been saved and tokenized before.
         if os.path.exists(tokenDataPath):
             tokenized_datasets = load_from_disk(tokenDataPath)
+        # If not tokenize it and save it.
         else:
             features =list(dataset['train'].features.keys())
             if 'label' in features:
@@ -177,89 +198,83 @@ class FIP:
             tokenized_datasets.save_to_disk(tokenDataPath)
         return tokenized_datasets
         
-    #Load and tokenize both datasets    
+    #Load and tokenize both datasets.
     def load_datasets(self):
         print("Load datasets")
+        # Load the first dataset save its data path and tokenize it.
         self.dataset_0 = ld(self, 0)
         self.dataPath_0 = self.dataPath
-        
         self.token_data_0 = self.tokenize_data(self.dataset_0, self.dataPath_0)
         
+        # Load the second dataset save its data path and tokenize it.
         self.dataset_1 = ld(self, 1)
         self.dataPath_1 = self.dataPath
-        
         self.token_data_1 = self.tokenize_data(self.dataset_1, self.dataPath_1)
-    
-        self.datasets = [self.dataset_0, self.dataset_1]
-        self.dataPaths = [self.dataPath_0, self.dataPath_1]
+
+        # If we are in short mode we will shrink the dataset to tiny subset.
         if self.short:
             self.token_data_0['test'] = self.token_data_0['test'].shuffle(seed=42).select(range(2000))
             self.token_data_0['train'] = self.token_data_0['train'].shuffle(seed=42).select(range(5000))
             self.token_data_1['test'] = self.token_data_1['test'].shuffle(seed=42).select(range(2000))
             self.token_data_1['train'] = self.token_data_1['train'].shuffle(seed=42).select(range(5000))
+
+        # Put both dataset, data paths, and the tokenized datasets into lists.
+        self.datasets = [self.dataset_0, self.dataset_1]
+        self.dataPaths = [self.dataPath_0, self.dataPath_1]
         self.token_datasets = [self.token_data_0, self.token_data_1]
     
-    #Extned the labeling so there is no overlap in classes between datasets
+    # Extened the labeling so there is no overlap in classes between datasets.
     def update_label(self, example):
         example['label'] = example['label'] + self.label_len
         return example                     
- 
-    #Apply te label extention and save the tokenized datasets
-    def extend_dataset(self):
-        self.label_len = len(np.unique(self.datasets[0]['train']['label']))
-        extneded_path = self.dataPaths[1]+'_token_extended'
-        if os.path.exists(extneded_path):
-            self.token_datasets[1] = load_from_disk(extneded_path)
-        else:
-            print(self.label_len)
-            #updated_token_datasets = self.token_datasets[1].map(self.update_label)
-            print('reasign')
-            self.token_datasets[1] = self.token_datasets[1].map(self.update_label)
-            self.token_datasets[1].save_to_disk(self.dataPaths[1]+'_token_extended')
+
                                 
-# import numpy as np
-# import os
+    # Apply te label extention and save the tokenized datasets.
     def extend_labels(self):
         self.label_len = len(np.unique(self.datasets[0]['train']['label']))
         extneded_path = self.dataPaths[1]+'_token_extended'
+        # Check if the extended version has created and saved before.
         if os.path.exists(extneded_path):
             self.token_datasets[1] = load_from_disk(extneded_path)
         else:
-            print('dataset 0', self.label_len)
+
             class_label0 = self.token_datasets[0]['test'].info.features['label']
             class_label1 = self.token_datasets[1]['test'].info.features['label']
-            print('dataset 1', class_label1.num_classes)
+            # Increase the number of lables in the second dataset to the total number of label.
             class_label1.num_classes = class_label1.num_classes + self.label_len
             self.token_datasets[1]['train'].info.features['label'].num_classes = class_label1.num_classes
+            # Add the first dataset names to second datasets name list to accomidate the large label number.
             self.token_datasets[1]['test'].info.features['label'].names = class_label0.names + class_label1.names 
             self.token_datasets[1]['train'].info.features['label'].names = class_label1.names
-            print('class label 1',class_label1)
-            print('train 1',self.token_datasets[1]['train'].info.features['label'])
-            print('test 1',self.token_datasets[1]['test'].info.features['label'])
-            #updated_token_datasets = bert_imdb_tweet.token_datasets[1].map(bert_imdb_tweet.update_label)
-            print('reasign')
+            # Increase the second datasets labels so there is no overlap with the first dataset.
             self.token_datasets[1]['train'] = self.token_datasets[1]['train'].map(self.update_label)
             self.token_datasets[1]['test'] = self.token_datasets[1]['test'].map(self.update_label)
             self.token_datasets[1].save_to_disk(self.dataPaths[1]+'_token_extended')            
                 
     
-    
+    # This method is used by the trainer to evaluate the model.
     def compute_metrics(self, eval_pred):
         logits, labels = eval_pred
         predictions = np.argmax(logits, axis=-1)
         return self.metric.compute(predictions=predictions, references=labels) 
     
-    def train_first_model(self):
+    # This method trains the first dataset on passed model.
+    def train_first_dataset(self):
         print("Train First Model")
+        # Grab the name of the model from the model location.
         self.model_name = self.HF_loc.split("/")[-1]
+        # Grab the datat name.
         self.data_name0 = self.data_locs[0].split("/")[-1]
+        # Create a location to save tainer checkpoint.
         full_name = f"{self.model_name}-finetune-{self.data_name0}"
         output_path = 'trainer_checkpoint/'
         output_path += full_name
+        
+        # Define training args.
         training_args = TrainingArguments(
             output_dir=output_path,
             evaluation_strategy = "steps",
-            eval_steps = 100, # Evaluation and Save happens every 100 steps
+            eval_steps = 100, # Evaluation and Save happens every 100 steps.
             save_total_limit = 5, # Only last 5 models are saved. Older ones are deleted.
             learning_rate=2e-5,
             weight_decay=0.1,#0.01
@@ -270,7 +285,7 @@ class FIP:
             load_best_model_at_end=True
         )
 
-        
+        # Check if it exists and load it if it exists.
         if os.path.exists(output_path+'/*'):
             check_points = os.listdir(output_path)
             print(len(check_points))
@@ -286,31 +301,25 @@ class FIP:
                         data_collator=self.data_collator,
                         tokenizer=self.tokenizer,
                         compute_metrics=self.compute_metrics,
-                        callbacks = [EarlyStoppingCallback(early_stopping_patience=0)]
+                        callbacks = [EarlyStoppingCallback(early_stopping_patience=1)]
                         )
 
             self.trainer.train()
+        # Save the trained model as the 'original'.
         self.model = self.trainer.model
         global model_ori
-        model_ori = self.copy_ori(self.model,'originals/'+full_name)
+        model_ori = copy.deepcopy(self.model) #Model already trained on yelp
+        model_ori.to('cuda:0')
+        #model_ori = self.copy_ori(self.model,'originals/'+full_name)
         return self.model   
 
-    def copy_ori(self, model, data_path):
-        print("CREATING COPY OF MODEL")
-        # model.save_pretrained(data_path)
-        # save_copy = AutoModelForSequenceClassification.from_pretrained(data_path, num_labels=self.num_labels)
-        # model_to_copy = model
-        # print("save copy is model copy?", save_copy is model_to_copy)
-        # print("save copy is self.model?", save_copy is model)
-        # print("model copy is self.model?", model_to_copy is model)
-        model_ori = copy.deepcopy(model) #Model already trained on yelp
-        model_ori.to('cuda:0')
-        return model_ori
-    
-    def train_second_model(self):
-        print("Train Second Model")
+    # Define a trainer which will only be used to extract the dataloader
+    # and will not be trained.
+    def get_prev_data_loader(self):
+        print("Get Previous Data Loader")
         self.data_name1 = self.data_locs[1].split("/")[-1]
         output_path = f"{self.model_name}-finetune-{self.data_name1}"
+        # Define the traing arguments 
         training_args = TrainingArguments(
             output_dir=output_path,
             evaluation_strategy = "no",
@@ -323,10 +332,6 @@ class FIP:
             per_device_train_batch_size=8   
         )
 
-        # global numSteps_taken
-        # numSteps_taken = [0]
-
-
         #Subsample small number of examples from the yelp dataset.
         small_train_first = self.token_datasets[0]['train'].shuffle(seed=42).select(range(2000))
         small_test_first = self.token_datasets[0]['test'].shuffle(seed=42).select(range(1500))
@@ -334,7 +339,7 @@ class FIP:
         print("First small dataset", small_test_first)
 
 
-        #Only used for the Dataloader that will be used from it
+        # Define the trainer which will only be used for the Dataloader
         trainer1 = Trainer(
             model=self.model,
             args=training_args,
@@ -344,13 +349,18 @@ class FIP:
             tokenizer=self.tokenizer,
             compute_metrics=self.compute_metrics,
             )
-        
+        # Assign the dataloader to the class instance
         self.prevData_loader = trainer1.get_train_dataloader()
         return self.prevData_loader
     
+    # Run the custom trainer on both datasets.
+    # This method requires both datasets to be tokenized
+    # and prevData_loader and model_ori must be defined from get_prev_data_loader()
+    # and train_first_dataset() respectively. 
     def run_custom_trainer(self):
         print('Run Custom Trainer')
         output_path = f"{self.model_name}-finetune-{self.data_name0}-{self.data_name1}"
+        # Define the training arguments.
         self.custom_training_args = TrainingArguments(
             output_dir=output_path,
             evaluation_strategy = "no",
@@ -363,7 +373,7 @@ class FIP:
             per_device_train_batch_size=8   
         )
         
-        
+        # Initalize the custom trainer with the second dataset.
         self.custom_trainer = CustomTrainer(
             model=self.model,
             args=self.custom_training_args,
@@ -372,8 +382,10 @@ class FIP:
             data_collator=self.data_collator,
             tokenizer=self.tokenizer,
             )
+        # Pass the data loader and original model to the custom trainer rather than
+        # using gloabl variables. 
 
-        self.custom_trainer.prevData_loader = prevData_loader
+        #self.custom_trainer.prevData_loader = prevData_loader
         #self.custom_trainer.prevData_loader = self.model_ori
         print("CUSTOM TRAINING") 
         self.custom_trainer.train()
