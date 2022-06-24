@@ -56,7 +56,7 @@ class SparsifyTrainer(Trainer):
         epsAdd = max(1e-10, torch.min(outputs_ori)*1e-3);
         bcloss = -torch.log(torch.sum(torch.sqrt(outputs*outputs_ori+epsAdd), axis=self.axis));
 
-        loss = bcloss;
+        loss = torch.sum(bcloss);
         
         vecDist = eucDist(model,  model_sp)
         if self.numSteps_taken[0] % 10 == 0:
