@@ -1,18 +1,20 @@
-from transformers import DataCollatorForLanguageModeling, AutoModelForMaskedLM
-import torch
-from torch import nn
 import numpy.linalg as LA
-
-import random
 import pandas as pd
 import numpy as np
+import time
+import random
+import torch
 import copy
 import os
+
+from torch import nn
+
 from sentence_transformers import SentenceTransformer
 
 from datasets import (load_dataset, load_from_disk,
                      load_metric, ClassLabel)
 
+from transformers import DataCollatorForLanguageModeling, AutoModelForMaskedLM
 from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
                          Trainer, TrainingArguments, DataCollatorWithPadding)
 
@@ -41,9 +43,9 @@ class SparsifyTrainer(Trainer):
         # model = model.module if hasattr('module') else model
         
         if self.numSteps_taken[0] % 10 == 0:
-            wtsVec = convertTransformer2wts(model.module)
-            _, wts_sp = findVec_sparseHyperplane(wtsVec, sparsity)
-            model_sp = convertWtsVec_transformer(wts_sp)
+            wtsVec = convertTransformer2wts(model)
+            _, wts_sp = findVec_sparseHyperplane(wtsVec, self.sparsity)
+            model_sp = convertWtsVec_transformer(self.model, wts_sp)
         
         outputs = model(**inputs)
         outputs = f_softmax(outputs.logits)
@@ -57,8 +59,8 @@ class SparsifyTrainer(Trainer):
         loss = bcloss;
         
         vecDist = eucDist(model,  model_sp)
-        if numSteps_taken[0] % 10 == 0:
-            print("DIST 2 sparse", vecDist, "SPARSITY", sparsity)
+        if self.numSteps_taken[0] % 10 == 0:
+            print("DIST 2 sparse", vecDist, "SPARSITY", self.sparsity)
         loss = loss + vecDist
 
         
@@ -73,14 +75,14 @@ class SparsifyTrainer(Trainer):
 #             # We don't use .loss here since the model may return tuples instead of ModelOutput.
 #             loss = outputs["loss"] if isinstance(outputs, dict) else outputs[0]
 
-        numSteps_taken[-1] = numSteps_taken[-1]+1
+        self.numSteps_taken[-1] = self.numSteps_taken[-1]+1
         
-        print("Time taken for ", numSteps_taken[-1], " is = ", time.time() - st_time)
+        print("Time taken for ", self.numSteps_taken[-1], " is = ", time.time() - self.st_time)
         
         #print("number of times running the compute loss fn = ", numSteps_taken[0])
     
-
-        return (loss, outputs) if return_outputs else loss
+        self.outputs = outputs
+        return loss
 
          
     # Tokenize a Dataset.
@@ -131,6 +133,7 @@ def run_sparsify(sparsity, model_cp, dataPath, num_train_epochs, masked=False, t
         num_train_epochs= num_train_epochs,
         per_device_train_batch_size=4   
     )
+    #print('general', model)
     trainer = SparsifyTrainer(
     model=model,
     args=training_args,
@@ -156,14 +159,17 @@ def run_sparsify(sparsity, model_cp, dataPath, num_train_epochs, masked=False, t
  #   global numSteps_taken
     trainer.numSteps_taken = [0]
     trainer.axis = axis
-
+    trainer.sparsity = sparsity
+    
+    trainer.st_time = time.time()
+    
     import math
     eval_results = trainer2.evaluate()
     print(f"Perplexity: {math.exp(eval_results['eval_loss']):.2f}")
 
     print("CUSTOM TRAINING")
     trainer.train()
-    return trainer, eval_resu;lts
+    return trainer, eval_results
 
 
 
@@ -209,7 +215,7 @@ def findVec_sparseHyperplane(wtsVec, sparsity):
     return vec_hyperplane, wts_fin
     
     
-def convertWtsVec_transformer(wtsVec, layer=-1):
+def convertWtsVec_transformer(model, wtsVec, layer=-1):
     
     model2 = copy.deepcopy(model)
     
