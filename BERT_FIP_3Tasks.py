@@ -37,7 +37,12 @@ import gc
 # bert_imdb_tweet = fip.FIP(HF_loc='bert-base-uncased', 
 #                     data_locs=['imdb','tweet_eval'], data_args=[None,'hate'])
 # bert_imdb_tweet.quick_run()
-
+#
+# Too add a third Task
+# import FIP_Bert as fip
+# bert_imdb_tweet = fip.FIP(HF_loc='bert-base-uncased', data_locs=['imdb','tweet_eval'], data_args=[None,'hate'], quick=False, short=True)
+# bert_imdb_tweet.additionalt_task(data_loc='emotion', data_arg='hate', 
+#               two_ct_checkpoint='bert-base-uncased-finetune-imdb-tweet_eval/checkpoint-1000/',load=False)
 
 # Downlad a model and define the tokenizer.
 def download_model(instance):
