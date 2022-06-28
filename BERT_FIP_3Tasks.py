@@ -165,48 +165,84 @@ class FIP:
         self.data_name0 = self.data_locs[0].split("/")[-1]
         self.data_name1 = self.data_locs[1].split("/")[-1]
         if quick:
-            self.two_task()
+            self.two_ct =  self.two_task()
 
-    def additionalt_task(self, data_loc, data_arg=None, two_ct_checkpoint=None, load=True):
+
+    '''
+
+    This method will take a FIP model for two tasks and add a third task.
+    This is acomplished by combining the first two tasks into one dataset 
+    and using a two taks FIP model as the starting model. Then simply 
+    continue like a two task FIP.
+    For this to work the two taks FIP must already have been run or
+    a checkpoint from the two task custom trainer can be passed.
+
+    Arguments
+    data_loc: A huggingface data location or a location on disk within
+              the 'save_loc/datasets directory.
+              (E.g. 'Glue' or 'Emotion')
+    data_arg: The required datasubset selection from data_loc's subsets.
+              If data_loc does not have subsets data_arg should be left
+              as None
+              (E.g. 'Cola' or None)
+    two_ct_checkpoint: If the additional task is not being added after
+                       two trask training a twotask model checkpoint 
+                       must be passed.
+                       (E.g. 'bert-base-uncased-finetune-imdb-tweet_eval/checkpoint-1000/')
+    load: If True the method will atempt to load the combined 
+          dataset if it has been created in the past. If False
+          the method will recreate teh combined dataset each run
+    '''
+    def additionalt_task(self, data_loc, data_arg=None, two_ct_checkpoint=None, load=True):\
+        # Load the two task datasets
         dataset_0 = ld(self, 0)
         dataset_1 = ld(self, 1)
         
         
-        # Extend the class lables so there is no overlap.
-          
-        # Make both datasetsa the same length
-        
-        # Combine the two datasets and save the result. 
-        #self.two_task_dataset = concatenate_datasets([dataset_0, dataset_1])
+
+        # Create a save location for the combined datasets.
         dataPath = self.datsets_loc 
         pathExtention =  'combined_datasets/'
-        pathExtention += self.data_locs[0]
+
+        pathExtention += self.data_name0
         if self.data_args[0] != None:
             pathExtention += '_'+self.data_args[0]
-        pathExtention += '_' + self.data_locs[1] 
+
+        pathExtention += '_' + self.data_name1
         if self.data_args[1] != None:
             pathExtention += '_' + self.data_args[1]
+
         self.combined_dataPath = dataPath + pathExtention
+        # If we have a dataset saved at this location and load is true
+        # we will load from disk rather than recreating the dataset.
         if os.path.exists(self.combined_dataPath) and load:
             self.two_task_dataset = load_from_disk(self.combined_dataPath)
         else:
+            # Extend the class lables so there is no overlap.
+            # Make both datasetsa the same length
+            # Combine the two datasets and save the result. 
             self.combine_dataset(dataset_0, dataset_1)
             self.two_task_dataset.save_to_disk(self.combined_dataPath)
 
+        # Save the arguments of the two task run for future reference.
         self.original_locs = self.data_locs
         self.original_args = self.data_args
+        # Change the data sets and args to be the combined dataset 
+        # and the third task dataset.
         self.data_locs = [pathExtention, data_loc]
         self.data_args = [None, data_arg]
+        # Change to the new datanames.
         self.data_name0 = self.data_locs[0].split("/")[-1]
         self.data_name1 = self.data_locs[1].split("/")[-1]
 
-
+        # From here we simply proceed like we are preforming a two
+        # task FIP
         self.prep_model_datasets()
         # Define a metric to evaluate your models.
         self.metric = load_metric("accuracy")
         # Define a data collator that will keep a uniform input lenght.
         self.data_collator = DataCollatorWithPadding(tokenizer=self.tokenizer)
-        # Train the saved model on the first dataset.
+        # Check if we are using a checkpoint or if two task has already been run.
         if self.two_ct == None: #not in locals():
             assert two_ct_checkpoint != None, \
             "A two task FIP checkpoint must be passed\
@@ -215,10 +251,9 @@ class FIP:
             self.two_ct = AutoModelForSequenceClassification.from_pretrained(
                                         two_ct_checkpoint, num_labels=self.num_labels,
                                         ignore_mismatched_sizes=True)
-        
         self.model = self.two_ct
         global model_ori
-        model_ori = copy.deepcopy(self.model) #Model already trained on yelp
+        model_ori = copy.deepcopy(self.model) #Model already trained on two tasks
         model_ori.to('cuda:0')
         # Save the data loader from a trainer based on the FIP run
         # it will be used in the custom trainer.
@@ -227,8 +262,18 @@ class FIP:
         self.additional_ct =  self.run_custom_trainer()
         return self.additional_ct
 
+    '''
+    This method will combine two datasets in DataDict format.
+    The large dataset wil be subsampled to create and 50/50
+    split between the two dataset. 
+    dataset_1 will have its labels extended to avoid overlap.
+    Both datasets will have ther number of classes and 
+    class names combined.
+    '''
     def combine_dataset(self, dataset_0, dataset_1):
         
+        # Find the size of the smaller dataset and subsample the dataset
+        # to that upper limit.
         min_test =  min(len(dataset_0['test']), len(dataset_1['test']))
         min_train =  min(len(dataset_0['train']), len(dataset_1['train']))
         dataset_0['test'] = dataset_0['test'].shuffle(seed=42).select(range(min_test))
@@ -240,45 +285,55 @@ class FIP:
         class_label0 = dataset_0['test'].info.features['label']
         class_label1 = dataset_1['test'].info.features['label']
         self.label_len = class_label0.num_classes
-        # Increase the number of lables in the second dataset to the total number of label.
+
+        # Increase the range of lables in the both dataset to the total number of labels,
+        # so they can be combined.
         total_classes = class_label1.num_classes + class_label0.num_classes
         dataset_1['test'].info.features['label'].num_classes = total_classes
         dataset_1['train'].info.features['label'].num_classes = total_classes
         dataset_0['train'].info.features['label'].num_classes = total_classes
         dataset_0['test'].info.features['label'].num_classes = total_classes
-        # Add the first dataset names to second datasets name list to accomidate the large label number.
+        # Add the both dataset names to both datasets name list to accomidate 
+        # the large label number.
         all_class_names = class_label0.names + class_label1.names
         dataset_1['test'].info.features['label'].names =  all_class_names
         dataset_1['train'].info.features['label'].names = all_class_names
         dataset_0['test'].info.features['label'].names = all_class_names
         dataset_0['train'].info.features['label'].names = all_class_names
+
         # Increase the second datasets labels so there is no overlap with the first dataset.
-        
         dataset_1['train'] = dataset_1['train'].map(self.update_label)
         dataset_1['test'] = dataset_1['test'].map(self.update_label)
         
+        # Remove everything except the 'text' and 'label' from the 'train' and 'test' sets
         dataset_1 = self.clean_dataset(dataset_1)
         dataset_0 = self.clean_dataset(dataset_0)
 
-        
+        # Basic check to make sure they will concatenate (necessary but not sufficient)
         assert dataset_0['test'].features.type == dataset_1['test'].features.type
         
+        # Combine the two two test and train datasets
         two_task_dataset_test = concatenate_datasets([dataset_0['test'], dataset_1['test']])
         two_task_dataset_train = concatenate_datasets([dataset_0['train'], dataset_1['train']])
+        # Put the combined train and test set into one DatasteDict
         two_tast_dict = DatasetDict()
         two_tast_dict['test'] = two_task_dataset_test
         two_tast_dict['train'] = two_task_dataset_train
+
         self.two_task_dataset  = two_tast_dict
         
         return self.two_task_dataset
-    
+    # This method removes everything except the 'text' and 'label' from 
+    # the 'train' and 'test' sets
     def clean_dataset(self, dataset):
         print('1',dataset['train'].features.keys())
+        # pop everythign that isn't "train" or "test" (E.g. "validation")
         columns = list(dataset.keys())
         pop_list = [col for col in columns if col not in ["train", "test"]]
         for pop in pop_list:
             dataset.pop(pop)
-        
+
+        # Change the name of the text to 'text' incase it is anything else.
         features =list(dataset['train'].features.keys())
         print('2',features)
         if 'label' in features:
@@ -286,6 +341,7 @@ class FIP:
         key = features[0]
         if key != "text":
              dataset = dataset.rename_column(key, "text")
+        # Remove everything but the 'text' and the 'label' for uniformity.
         column_names = [col for col in features if col not in ["text", "label"]]
         print(column_names)
         dataset = dataset.remove_columns(column_names)
@@ -306,8 +362,8 @@ class FIP:
         # it will be used in the custom trainer.
         global prevData_loader
         prevData_loader = self.get_prev_data_loader()
-        self.two_ct = self.run_custom_trainer()
-        return  self.two_ct
+        self.two_ct_trainer = self.run_custom_trainer()
+        return  self.two_ct_trainer.modle
          
         
     
